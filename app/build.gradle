@@ -1,0 +1,39 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'com.acbltracker.android'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'com.acbltracker.android'
+        minSdk 26
+        targetSdk 35
+        versionCode providers.gradleProperty('versionCode').getOrElse('2').toInteger()
+        versionName providers.gradleProperty('versionName').getOrElse('1.1.0')
+        buildConfigField 'String', 'UPDATE_REPOSITORY', '"jnish23/ACBLTracker-Android"'
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    buildFeatures { buildConfig true }
+    def signingFile = System.getenv('ACBL_KEYSTORE_PATH') ? file(System.getenv('ACBL_KEYSTORE_PATH')) : rootProject.file('.tools/android-user/debug.keystore')
+    signingConfigs {
+        preserved {
+            if (signingFile.exists()) storeFile signingFile
+            storePassword System.getenv('ACBL_STORE_PASSWORD') ?: 'android'
+            keyAlias System.getenv('ACBL_KEY_ALIAS') ?: 'androiddebugkey'
+            keyPassword System.getenv('ACBL_KEY_PASSWORD') ?: 'android'
+        }
+    }
+    buildTypes {
+        debug { if (signingFile.exists()) signingConfig signingConfigs.preserved }
+        release {
+            minifyEnabled false
+            if (signingFile.exists()) signingConfig signingConfigs.preserved
+        }
+    }
+}
+dependencies {
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.json:json:20240303'
+}
