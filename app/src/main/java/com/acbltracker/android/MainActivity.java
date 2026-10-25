@@ -4,6 +4,7 @@ import android.Manifest;
 import android.app.*;
 import android.content.*;
 import android.content.pm.PackageManager;
+import android.net.Uri;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.*;
@@ -25,6 +26,13 @@ public final class MainActivity extends Activity {
     private UpdateManager updates;
     private final EspnClient client = new EspnClient();
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
+    private final ExecutorService newsWorker = Executors.newFixedThreadPool(3);
+    private final Map<String, NewsState> newsStates = new HashMap<>();
+    private static final class NewsState {
+        List<PlayerNews> items = Collections.emptyList();
+        final List<Runnable> callbacks = new ArrayList<>();
+        boolean loading; long fetched; String error = "";
+    }
     private final Handler handler = new Handler(Looper.getMainLooper());
     private LocalDate date = currentWeek();
     private Lineup lineup;
@@ -51,7 +59,7 @@ public final class MainActivity extends Activity {
     @Override protected void onSaveInstanceState(Bundle state) { super.onSaveInstanceState(state); state.putString("week", date.toString()); state.putInt("tab", tab); state.putInt("night", night); }
     @Override protected void onResume() { super.onResume(); handler.postDelayed(poll, 60000); if (store != null && !loading) refresh(); if (updates != null) updates.onResume(); }
     @Override protected void onPause() { super.onPause(); handler.removeCallbacks(poll); }
-    @Override protected void onDestroy() { destroyed = true; generation++; handler.removeCallbacksAndMessages(null); worker.shutdownNow(); client.close(); if (updates != null) updates.close(); super.onDestroy(); }
+    @Override protected void onDestroy() { destroyed = true; generation++; handler.removeCallbacksAndMessages(null); worker.shutdownNow(); newsWorker.shutdownNow(); client.close(); if (updates != null) updates.close(); super.onDestroy(); }
     private void loadLocal() { lineup = store.lineup(date); week = store.week(date, lineup); }
     private boolean editable() { return !date.isBefore(currentWeek()); }
     private void shift(int amount) { generation++; date = date.plusWeeks(amount); night = 0; editing = false; loading = false; message = ""; loadLocal(); render(); refresh(); }
@@ -115,10 +123,10 @@ public final class MainActivity extends Activity {
         nav.addView(center, new LinearLayout.LayoutParams(0, -2, 1)); nav.addView(button("›", "Next week", () -> shift(1))); root.addView(nav);
         scroll = new ScrollView(this); scroll.setFillViewport(true); scroll.setClipToPadding(false);
         content = column(); content.setPadding(dp(18), dp(4), dp(18), dp(24)); scroll.addView(content); root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
-        if (tab == 0) lineupScreen(); else if (tab == 1) nightlyScreen(); else historyScreen();
+        if (tab == 0) lineupScreen(); else if (tab == 1) nightlyScreen(); else if (tab == 2) historyScreen(); else newsScreen();
         LinearLayout tabs = row(); tabs.setPadding(dp(14), dp(5), dp(14), dp(8)); tabs.setBackgroundColor(CARD);
-        String[] names = {"☷  Lineup", "☾  Nightly", "▥  History"};
-        for (int i = 0; i < 3; i++) { final int index = i; TextView t = text(names[i], 14, tab == i ? GOLD : MUTED, tab == i); t.setGravity(Gravity.CENTER); t.setMinHeight(dp(52)); t.setBackground(round(tab == i ? 0xff30352a : CARD, 14)); t.setOnClickListener(v -> { tab = index; scroll = null; render(); }); tabs.addView(t, new LinearLayout.LayoutParams(0, -2, 1)); }
+        String[] names = {"☷  Lineup", "☾  Nightly", "▥  History", "▤  News"};
+        for (int i = 0; i < names.length; i++) { final int index = i; TextView t = text(names[i], 13, tab == i ? GOLD : MUTED, tab == i); t.setGravity(Gravity.CENTER); t.setMinHeight(dp(52)); t.setBackground(round(tab == i ? 0xff30352a : CARD, 14)); t.setOnClickListener(v -> { tab = index; scroll = null; render(); }); tabs.addView(t, new LinearLayout.LayoutParams(0, -2, 1)); }
         root.addView(tabs); setContentView(root); root.requestApplyInsets(); scroll.post(() -> scroll.scrollTo(0, oldY));
     }
     private void summary() {
@@ -147,7 +155,7 @@ public final class MainActivity extends Activity {
         boolean empty = true; for (Player p : lineup.players) if (p != null) empty = false;
         if (empty && editable()) { LinearLayout welcome = panel(); welcome.addView(text("Build your starting five.", 18, GOLD, true)); TextView sub = text("Find your players, assign their league positions, and follow every counting game.", 13, MUTED, false); sub.setPadding(0, dp(8), 0, dp(8)); welcome.addView(sub); welcome.addView(smallButton("Find NBA players  →", () -> picker(-1))); addBlock(welcome); }
         section("STARTERS", "Full points + bonus", 0, 5); section("BENCH", "Next 3 active · half points", 5, 8); section("DEEP BENCH", "Reserves · in priority order", 8, 14);
-        note("First two team games · Tuesday–Monday league weeks. Pending games are provisional until the box score is final.");
+        note("First two team games · Tuesday–Monday weeks. Gray scores show uncounted NBA points. Pending games are provisional.");
     }
     private void section(String title, String subtitle, int start, int end) {
         LinearLayout label = row(); label.setPadding(dp(2), dp(17), dp(2), dp(9)); label.addView(text(title, 11, GOLD, true), new LinearLayout.LayoutParams(0, -2, 1)); label.addView(text("G1        G2", 10, MUTED, true)); content.addView(label);
@@ -158,7 +166,7 @@ public final class MainActivity extends Activity {
             TextView badge = text(i < 5 ? POSITIONS[i] : String.format(Locale.US, "%02d", i - 4), 12, p == null ? MUTED : GOLD, true); badge.setGravity(Gravity.CENTER); badge.setBackground(round(0xff28322b, 10)); r.addView(badge, new LinearLayout.LayoutParams(dp(33), dp(33)));
             LinearLayout info = column(); info.setPadding(dp(12), 0, dp(4), 0); TextView name = text(p == null ? "Add " + (i < 5 ? POSITIONS[i] : "player") + "  +" : p.name + (editable() && injuries.containsKey(p.id) ? "  +" : ""), 14, p == null ? MUTED : WHITE, true); name.setMaxLines(2); info.addView(name);
             info.addView(text(p == null ? (editable() ? "Open roster spot" : "Empty slot") : p.team + "  ·  " + p.position + (editing ? "  ·  Hold to move" : ""), 10, MUTED, false)); r.addView(info, new LinearLayout.LayoutParams(0, -2, 1));
-            for (int g = 0; g < 2; g++) { Result rr = result[g][i]; LinearLayout score = column(); score.setGravity(Gravity.CENTER); TextView points = text(p == null ? "—" : scoreLabel(rr), 14, rr.line.state == State.DNP ? RED : rr.bonus > 0 ? GOLD : rr.role == Role.RESERVE ? MUTED : WHITE, true); points.setGravity(Gravity.CENTER); score.addView(points); if (p != null && rr.bonus > 0) score.addView(text("+" + rr.bonus + " bonus", 8, GOLD, true)); else if (p != null && rr.line.state != State.PENDING && rr.line.state != State.DNP) score.addView(text(rr.role == Role.HALF ? "½ pts" : rr.role == Role.RESERVE ? "reserve" : rr.role == Role.PROMOTED ? "↑ full" : rr.line.state == State.LIVE ? "live" : "played", 8, MUTED, false)); r.addView(score, new LinearLayout.LayoutParams(dp(48), -2)); }
+            for (int g = 0; g < 2; g++) { Result rr = result[g][i]; LinearLayout score = column(); score.setGravity(Gravity.CENTER); TextView points = text(p == null ? "—" : scoreLabel(rr), 14, p == null ? MUTED : scoreColor(rr), true); points.setGravity(Gravity.CENTER); score.addView(points); if (p != null && rr.bonus > 0) score.addView(text("+" + rr.bonus + " bonus", 8, GOLD, true)); else if (p != null && rr.line.state != State.PENDING && rr.line.state != State.DNP) score.addView(text(rr.role == Role.HALF ? "½ pts" : rr.role == Role.RESERVE ? "not counted" : rr.role == Role.PROMOTED ? "↑ full" : rr.line.state == State.LIVE ? "live" : "played", 8, MUTED, false)); r.addView(score, new LinearLayout.LayoutParams(dp(48), -2)); }
             r.setOnClickListener(v -> { if (p == null) { if (editable()) picker(slot); } else if (editing && editable()) playerMenu(slot); else detail(slot); });
             r.setOnLongClickListener(v -> { if (!editable() || p == null) return false; editing = true; v.startDragAndDrop(ClipData.newPlainText("slot", String.valueOf(slot)), new View.DragShadowBuilder(v), null, 0); return true; });
             r.setOnDragListener((v, event) -> { if (!editable()) return false; switch (event.getAction()) { case DragEvent.ACTION_DRAG_STARTED: return event.getClipDescription().hasMimeType("text/plain"); case DragEvent.ACTION_DRAG_ENTERED: v.setBackgroundColor(BORDER); return true; case DragEvent.ACTION_DRAG_EXITED: case DragEvent.ACTION_DRAG_ENDED: v.setBackgroundColor(android.graphics.Color.TRANSPARENT); return true; case DragEvent.ACTION_DROP: try { int from = Integer.parseInt(event.getClipData().getItemAt(0).getText().toString()); Lineup l = lineup.copy(); if (l.move(from, slot)) commit(l); else toast("Starter slots require the same league position."); } catch (Exception ignored) {} return true; default: return true; } });
@@ -166,7 +174,8 @@ public final class MainActivity extends Activity {
         }
         addBlock(card); TextView hint = text(subtitle, 10, MUTED, false); hint.setPadding(dp(3), dp(5), 0, 0); content.addView(hint);
     }
-    private String scoreLabel(Result r) { if (r.line.state == State.PENDING) return "—"; if (r.line.state == State.DNP) return "DNP"; return String.valueOf(r.total()); }
+    private String scoreLabel(Result r) { return r.displayLabel(); }
+    private int scoreColor(Result r) { return r.line.state == State.DNP ? RED : r.role == Role.RESERVE ? MUTED : WHITE; }
     private void nightlyScreen() {
         summary(); TextView title = text("Nightly courtside", 23, WHITE, true); title.setPadding(0, dp(22), 0, dp(5)); content.addView(title); note("Counting games for your roster · dates in Eastern time");
         HorizontalScrollView days = new HorizontalScrollView(this); days.setHorizontalScrollBarEnabled(false); LinearLayout strip = row();
@@ -174,13 +183,60 @@ public final class MainActivity extends Activity {
         int total = 0, count = 0; Result[][] results = week == null ? new Week().results(lineup) : week.results(lineup);
         for (int i = 0; i < 14; i++) for (int g = 0; g < 2; g++) {
             Player p = lineup.players[i]; Result r = results[g][i]; if (p == null || !r.line.day.equals(date.plusDays(night).toString())) continue;
-            count++; total += r.total(); final int slot = i; LinearLayout card = panel(); LinearLayout heading = row(); heading.addView(text(p.name, 16, WHITE, true), new LinearLayout.LayoutParams(0, -2, 1)); heading.addView(text(scoreLabel(r), 24, GOLD, true)); card.addView(heading);
-            card.addView(text("G" + (g + 1) + "  ·  " + r.line.opponent + "  ·  " + r.line.status, 12, MUTED, false)); card.addView(text(role(r) + (r.line.state == State.PENDING ? " · provisional" : " · " + r.line.points + " NBA points"), 12, GREEN, false)); card.setOnClickListener(v -> detail(slot)); addBlock(card);
+            count++; total += r.total(); final int slot = i; LinearLayout card = panel(); LinearLayout heading = row(); heading.addView(text(p.name, 16, WHITE, true), new LinearLayout.LayoutParams(0, -2, 1)); heading.addView(text(scoreLabel(r), 24, scoreColor(r), true)); card.addView(heading);
+            card.addView(text("G" + (g + 1) + "  ·  " + r.line.opponent + "  ·  " + r.line.status, 12, MUTED, false)); card.addView(text(role(r) + (r.line.state == State.PENDING ? " · provisional" : " · " + r.line.points + " NBA points"), 12, r.role == Role.RESERVE ? MUTED : GREEN, false)); card.setOnClickListener(v -> detail(slot)); addBlock(card);
         }
         if (count == 0) { LinearLayout empty = panel(); empty.addView(text(loading ? "Finding tonight’s games…" : "A quiet night.", 20, GOLD, true)); empty.addView(text("No counting games loaded for this date. Add players or refresh to check ESPN.", 13, MUTED, false)); addBlock(empty); }
         else { TextView totalView = text("NIGHT TOTAL    " + total + " PTS", 16, GOLD, true); totalView.setPadding(dp(5), dp(15), 0, 0); content.addView(totalView); }
     }
     private String role(Result r) { return r.role == Role.STARTER ? "Starter · full points" : r.role == Role.PROMOTED ? "Promoted · full points + bonus" : r.role == Role.HALF ? "Playing sub · half rounded up" : "Not counted"; }
+    private void newsScreen() {
+        LinearLayout title = row(); title.addView(text("Player news", 24, WHITE, true), new LinearLayout.LayoutParams(0, -2, 1));
+        title.addView(smallButton("Refresh", () -> { for (Player p : lineup.players) if (p != null) requestNews(p, true, null); render(); })); content.addView(title);
+        note("Latest ESPN updates for this week’s roster. News dates are current, even when viewing a past lineup.");
+        int players = 0;
+        for (int i = 0; i < lineup.players.length; i++) {
+            Player p = lineup.players[i]; if (p == null) continue; players++; final int slot = i;
+            NewsState state = requestNews(p, false, null); LinearLayout card = panel();
+            card.addView(text(p.name, 18, WHITE, true)); card.addView(text(p.team + "  ·  " + p.position, 11, MUTED, false));
+            appendNews(card, p, state, 2, null); card.addView(smallButton("Player details & more news  →", () -> detail(slot))); addBlock(card);
+        }
+        if (players == 0) { LinearLayout empty = panel(); empty.addView(text("News for your roster.", 20, GOLD, true)); empty.addView(text("Add players to your lineup to see their latest ESPN news and fantasy updates here.", 14, MUTED, false)); addBlock(empty); }
+    }
+    private NewsState requestNews(Player p, boolean force, Runnable callback) {
+        NewsState state = newsStates.computeIfAbsent(p.id, id -> new NewsState());
+        if (state.loading) { if (callback != null) state.callbacks.add(callback); return state; }
+        if (!force && (!state.error.isEmpty() || state.fetched > 0 && System.currentTimeMillis() - state.fetched < 300000)) return state;
+        state.loading = true; state.error = ""; if (callback != null) state.callbacks.add(callback);
+        newsWorker.execute(() -> {
+            List<PlayerNews> items = null; String error = "";
+            try { items = client.news(p, force); } catch (Exception e) { error = "Couldn't load ESPN news. Check your connection and retry."; }
+            final List<PlayerNews> loaded = items; final String problem = error;
+            runOnUiThread(() -> {
+                if (destroyed) return; state.loading = false; state.error = problem;
+                if (loaded != null) { state.items = loaded; state.fetched = System.currentTimeMillis(); }
+                List<Runnable> callbacks = new ArrayList<>(state.callbacks); state.callbacks.clear(); for (Runnable ready : callbacks) ready.run();
+                if (tab == 3) render();
+            });
+        });
+        return state;
+    }
+    private void appendNews(LinearLayout box, Player p, NewsState state, int limit, Runnable redraw) {
+        if (state.loading) { TextView loadingNews = text(state.items.isEmpty() ? "Loading ESPN news…" : "Refreshing news…", 12, MUTED, false); loadingNews.setPadding(0, dp(12), 0, dp(8)); box.addView(loadingNews); }
+        if (!state.error.isEmpty()) {
+            TextView error = text(state.error, 12, MUTED, false); error.setPadding(0, dp(12), 0, 0); box.addView(error);
+            box.addView(smallButton("Retry news", () -> { requestNews(p, true, redraw); if (redraw != null) redraw.run(); else render(); }));
+        } else if (!state.loading && state.items.isEmpty()) { TextView empty = text("No recent ESPN news for " + p.name + ".", 12, MUTED, false); empty.setPadding(0, dp(14), 0, dp(8)); box.addView(empty); }
+        for (int i = 0; i < Math.min(limit, state.items.size()); i++) {
+            PlayerNews item = state.items.get(i); LinearLayout story = column(); story.setPadding(0, dp(16), 0, dp(10));
+            story.addView(text(item.headline, 14, WHITE, true));
+            String dateLabel = item.published > 0 ? "  ·  " + Instant.ofEpochMilli(item.published).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("MMM d, yyyy · h:mm a")) : "";
+            story.addView(text(item.source + dateLabel, 10, MUTED, false));
+            if (!item.summary.isEmpty()) { TextView summary = text(item.summary, 12, MUTED, false); summary.setPadding(0, dp(6), 0, dp(2)); story.addView(summary); }
+            story.addView(text("Read on ESPN  ↗", 11, GOLD, true));
+            story.setContentDescription(item.headline + ". Read on ESPN"); story.setOnClickListener(v -> { try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(item.url))); } catch (ActivityNotFoundException e) { toast("No browser is available to open ESPN."); } }); box.addView(story);
+        }
+    }
     private void historyScreen() {
         TextView title = text("Season archive", 26, WHITE, true); title.setPadding(0, dp(12), 0, dp(8)); content.addView(title); note("Saved weeks stay on your phone. Tap a week to revisit its lineup and results.");
         Set<String> keys = store.weekKeys();
@@ -220,8 +276,11 @@ public final class MainActivity extends Activity {
         if (editable() && injuries.containsKey(p.id)) body.addView(text("Injury report: " + injuries.get(p.id), 13, RED, false));
         Result[][] rs = week == null ? new Week().results(lineup) : week.results(lineup);
         for (int g = 0; g < 2; g++) { Result r = rs[g][slot]; TextView t = text("GAME " + (g + 1) + "   " + r.line.opponent + "\n" + r.line.status + "\n" + role(r) + "\n" + (r.line.state == State.DNP ? "DNP · 0 counted points" : r.line.state == State.PENDING ? "Pending · provisional" : r.line.points + " PTS  ·  " + r.line.minutes + " MIN  ·  " + r.line.reb + " REB  ·  " + r.line.ast + " AST\n" + r.total() + " counted points (bonus +" + r.bonus + ")"), 13, WHITE, false); t.setPadding(0, dp(16), 0, dp(16)); body.addView(t); }
-        TextView recent = text("RECENT GAMES\nLoading ESPN game log…", 12, MUTED, false); body.addView(recent); ScrollView scroller = new ScrollView(this); scroller.addView(body);
+        body.addView(text("LATEST PLAYER NEWS", 12, GOLD, true)); LinearLayout news = column(); body.addView(news);
+        TextView recent = text("RECENT GAMES\nLoading ESPN game log…", 12, MUTED, false); recent.setPadding(0, dp(16), 0, 0); body.addView(recent); ScrollView scroller = new ScrollView(this); scroller.addView(body);
         AlertDialog.Builder b = new AlertDialog.Builder(this).setTitle(p.name).setView(scroller).setPositiveButton("Close", null); if (editable()) b.setNeutralButton("Manage player", (d, w) -> playerMenu(slot)); AlertDialog dialog = b.show();
+        Runnable[] redraw = new Runnable[1]; redraw[0] = () -> { if (!destroyed && dialog.isShowing()) { news.removeAllViews(); appendNews(news, p, newsStates.get(p.id), 5, redraw[0]); } };
+        requestNews(p, false, redraw[0]); redraw[0].run();
         worker.execute(() -> { try { String games = client.recentGames(p.id); runOnUiThread(() -> { if (dialog.isShowing()) recent.setText("RECENT GAMES\n\n" + games); }); } catch (Exception e) { runOnUiThread(() -> { if (dialog.isShowing()) recent.setText("Recent games unavailable. Saved counting games are shown above."); }); } });
     }
     private void picker(int target) {

@@ -13,6 +13,18 @@ import static com.acbltracker.android.League.*;
 public class EspnClient implements AutoCloseable {
     static final String BASE = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba";
     private final ExecutorService pool = Executors.newFixedThreadPool(6);
+    private final Map<String, NewsCache> newsCache = new ConcurrentHashMap<>();
+    private static final class NewsCache {
+        final long fetched = System.currentTimeMillis(); final List<PlayerNews> items;
+        NewsCache(List<PlayerNews> items) { this.items = items; }
+    }
+    List<PlayerNews> news(Player player, boolean force) throws Exception {
+        NewsCache cached = newsCache.get(player.id);
+        if (!force && cached != null && System.currentTimeMillis() - cached.fetched < 300000) return cached.items;
+        JSONObject overview = get("https://site.web.api.espn.com/apis/common/v3/sports/basketball/nba/athletes/" + player.id + "/overview");
+        if (!overview.has("news") && !overview.has("rotowire")) throw new IOException("ESPN player news unavailable");
+        List<PlayerNews> items = PlayerNews.parse(overview, player); newsCache.put(player.id, new NewsCache(items)); return items;
+    }
     public JSONObject get(String url) throws Exception {
         HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
         c.setConnectTimeout(15000); c.setReadTimeout(20000); c.setRequestProperty("Accept", "application/json");

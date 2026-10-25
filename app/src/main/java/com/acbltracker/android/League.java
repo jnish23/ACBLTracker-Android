@@ -58,6 +58,9 @@ public final class League {
         public GameLine line;
         public int counted, bonus, replacing = -1;
         public int total() { return counted + bonus; }
+        /** Reserve NBA points are visible for comparison, but never become counted points. */
+        public int displayPoints() { return role == Role.RESERVE ? line.points : total(); }
+        public String displayLabel() { return line.state == State.PENDING ? "—" : line.state == State.DNP ? "DNP" : String.valueOf(displayPoints()); }
     }
     public static Result[] score(Lineup lineup, GameLine[] lines) {
         Result[] r = new Result[14];

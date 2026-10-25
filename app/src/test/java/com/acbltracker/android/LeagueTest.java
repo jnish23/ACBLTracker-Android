@@ -31,4 +31,22 @@ public class LeagueTest {
     @Test public void jsonLineupRoundTripPreservesLeaguePositions() { Lineup l = lineup(); l.name = "Brun & Gun"; Lineup restored = Store.readLineup(Store.lineupJson(l)); assertEquals(l.name, restored.name); assertEquals("C", restored.players[4].position); assertEquals("13", restored.players[13].id); }
     @Test public void boxMinutesRecognizePartialMinute() { assertTrue(EspnClient.minutesPositive("0:32")); assertTrue(EspnClient.minutesPositive("32")); assertFalse(EspnClient.minutesPositive("0:00")); assertFalse(EspnClient.minutesPositive("--")); }
     @Test public void benchRegretUsesEachReserveOnlyOncePerGame() { Lineup l = lineup(); Week w = new Week(); w.lines[0] = played(); w.lines[0][5].points = 40; assertEquals(35, w.benchRegret(l)); }
+    @Test public void reserveNbaPointsAreVisibleWithoutChangingTotals() {
+        Lineup l = lineup(); Week w = new Week(); w.lines[0] = played(); w.lines[0][8].points = 43;
+        Result r = w.results(l)[0][8]; assertEquals(Role.RESERVE, r.role); assertEquals("43", r.displayLabel()); assertEquals(43, r.displayPoints()); assertEquals(0, r.total()); assertEquals(65, w.total(l, 0)); assertEquals(0, w.bonusTotal(l));
+    }
+    @Test public void deepBenchBackfillDisplaysOnlyCountedHalfPoints() {
+        Lineup l = lineup(); Week w = new Week(); w.lines[0] = played(); w.lines[0][6].state = State.DNP; w.lines[0][8].points = 33;
+        Result r = w.results(l)[0][8]; assertEquals(Role.HALF, r.role); assertEquals("17", r.displayLabel()); assertEquals(17, r.total()); assertEquals(77, w.total(l, 0));
+    }
+    @Test public void deepBenchPromotionDisplaysFullPointsAndBonus() {
+        Lineup l = lineup(); GameLine[] a = played(); a[0].state = a[5].state = State.DNP; a[9].points = 40;
+        Result r = score(l, a)[9]; assertEquals(Role.PROMOTED, r.role); assertEquals("45", r.displayLabel()); assertEquals(45, r.total());
+    }
+    @Test public void reserveLabelsDistinguishZeroPendingLiveAndDnp() {
+        GameLine[] a = played(); a[8].points = 0; assertEquals("0", score(lineup(), a)[8].displayLabel());
+        a[8] = new GameLine(State.LIVE, 12); assertEquals("12", score(lineup(), a)[8].displayLabel());
+        a[8].state = State.PENDING; assertEquals("—", score(lineup(), a)[8].displayLabel());
+        a[8].state = State.DNP; assertEquals("DNP", score(lineup(), a)[8].displayLabel());
+    }
 }
