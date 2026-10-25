@@ -18,3 +18,17 @@ Verified October 23, 2026 (Pacific time).
 Preview screenshots in `dist/` show the emulator's test roster. New installations start with an empty roster. No physical Android device has been tested in this workspace. Notification delivery timing under real-device battery restrictions has not been verified.
 
 The local toolchain, emulator image, caches, and development signing key live under `.tools/` and are excluded from the portable source archive. Preserve `.tools/android-user/debug.keystore` in this workspace for compatible APK updates.
+
+## GitHub updates — October 24, 2026
+
+- Public source and releases: https://github.com/jnish23/ACBLTracker-Android.
+- 35 local unit tests passed; release compilation and lint passed with 0 errors (English-text and legacy backup-configuration warnings remain).
+- GitHub Actions checked, built, signed, verified, and published release **1.1.3**, version code **1003**: https://github.com/jnish23/ACBLTracker-Android/actions/runs/40155681611.
+- The original signing key is held only in this workspace and the encrypted `ANDROID_KEYSTORE_BASE64` Actions secret, and is excluded from Git and downloadable source archives.
+- Independently verified the published APK's SHA-256 against `update.json`; CI also verified its certificate matches the original APK.
+- Tested the full updater path on Android 15: App updates → Check now → offer for 1.1.3 → verified download → Android's allow-installs settings → Android's update confirmation → successful installation.
+- Android reported installation success, installed version 1.1.3 / code 1003, with no runtime crash.
+- Reopened the updated app: Jalen Brunson remained rostered; saved weekly total 40 and Game 1 / Game 2 scores 21 / 19 remained intact.
+- The installer-stream issue found during the earlier 1.1.2 test is fixed in 1.1.3. Use the latest release.
+
+The updater checks when the app opens, at most once daily unless requested manually. Updates require Android's installation confirmation. This was verified in an emulator; a physical phone has not been connected.

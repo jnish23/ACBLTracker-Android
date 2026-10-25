@@ -25,6 +25,16 @@ The release workflow uses the encrypted repository secret `ANDROID_KEYSTORE_BASE
 
 This updates the app's code. Roster data stays local and does not sync through GitHub.
 
+From this connected workspace, publish changes with:
+
+```powershell
+git add .
+git commit -m "Describe your change"
+git push
+```
+
+Use the published APK for phone updates. Local development builds default to a low version code; manually installing them over a newer CI release requires setting a higher `-PversionCode` and using the preserved signing key.
+
 ## Use the app
 
 - **Lineup:** tap **+ Player**, search the NBA directory by player or team, then choose the position assigned by your league. Players fill an open starter slot at that position, then bench, then deep bench.
