@@ -8,6 +8,7 @@ import android.widget.Toast;
 public final class UpdateInstallReceiver extends BroadcastReceiver {
     @Override public void onReceive(Context context, Intent result) {
         int status = result.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE);
+        android.util.Log.i("ACBLUpdate", "Android install status: " + status);
         if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
             Intent confirm = result.getParcelableExtra(Intent.EXTRA_INTENT);
             if (confirm != null) {

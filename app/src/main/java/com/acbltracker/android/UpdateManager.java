@@ -134,14 +134,17 @@ final class UpdateManager implements AutoCloseable {
                 PackageInstaller installer = activity.getPackageManager().getPackageInstaller(); PackageInstaller.SessionParams params = new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL); params.setAppPackageName(activity.getPackageName()); params.setSize(apk.length());
                 if (Build.VERSION.SDK_INT >= 31) params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_REQUIRED);
                 sessionId = installer.createSession(params);
-                try (PackageInstaller.Session session = installer.openSession(sessionId); InputStream in = new FileInputStream(apk); OutputStream out = session.openWrite("base.apk", 0, apk.length())) {
-                    byte[] b = new byte[32768]; int n; while ((n = in.read(b)) != -1) out.write(b, 0, n); session.fsync(out); out.close();
+                try (PackageInstaller.Session session = installer.openSession(sessionId)) {
+                    try (InputStream in = new FileInputStream(apk); OutputStream out = session.openWrite("base.apk", 0, apk.length())) {
+                        byte[] b = new byte[32768]; int n; while ((n = in.read(b)) != -1) out.write(b, 0, n); session.fsync(out);
+                    }
                     Intent callback = new Intent(activity, UpdateInstallReceiver.class).setAction("com.acbltracker.UPDATE_RESULT");
                     int flags = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 31 ? PendingIntent.FLAG_MUTABLE : 0);
                     PendingIntent result = PendingIntent.getBroadcast(activity, sessionId, callback, flags); session.commit(result.getIntentSender());
                 }
                 post(() -> { busy = false; dismissProgress(); });
             } catch (Exception e) {
+                android.util.Log.w("ACBLUpdate", "Couldn't prepare Android installer", e);
                 if (sessionId >= 0) { try { activity.getPackageManager().getPackageInstaller().abandonSession(sessionId); } catch (Exception ignored) {} }
                 post(() -> { busy = false; dismissProgress(); toast("Couldn't prepare the update. Check free space and try again."); });
             }
