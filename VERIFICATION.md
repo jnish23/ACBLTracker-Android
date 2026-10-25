@@ -32,3 +32,14 @@ The local toolchain, emulator image, caches, and development signing key live un
 - The installer-stream issue found during the earlier 1.1.2 test is fixed in 1.1.3. Use the latest release.
 
 The updater checks when the app opens, at most once daily unless requested manually. Updates require Android's installation confirmation. This was verified in an emulator; a physical phone has not been connected.
+
+## Reserve scores and player news — October 24, 2026
+
+- 47 unit tests passed; release compilation and lint passed with no errors.
+- GitHub built and published **1.1.4**, version code **1004**: https://github.com/jnish23/ACBLTracker-Android/actions/runs/40157325307.
+- Emulator-only 14-player fixtures verified the display and totals independently: a deep reserve displayed 43 / 33 in gray while the team stayed at 65 / 65 (130 total). Promoting that reserve displayed 48 in white, including the +5 starter bonus, and the first game totaled 103. Backfilling a playing-sub spot displayed 22 in white and the first game totaled 82. The uncounted second game stayed gray throughout.
+- The test fixtures were never committed, published, or applied to a physical phone. The emulator's original roster was restored after the tests.
+- Live ESPN overview data loaded for Jalen Brunson in both the roster News tab and the player detail news section, including a dated RotoWire fantasy update and ESPN media links.
+- Confirmed that Read on ESPN launches the player's HTTPS ESPN page. News filtering, deduplication, date parsing, safe links, summary limits, caching, and forced refresh are covered by tests.
+- Offline refresh showed a retry message while retaining loaded articles; reconnecting and refreshing restored the news without a runtime crash.
+- The published APK checksum was verified against the release manifest and its signing certificate matches previous versions.
